@@ -1,1 +1,67 @@
+---
+- name: Create a virtual machine on KVM
+  hosts: all              # AWX inventory host = your KVM server
+  become: true
+  gather_facts: false
+
+  vars:
+    # Path to base cloud image on the KVM host
+    base_image_path: "/storage2/virtmachines/debian13_base.qcow2"
+
+    # Directory where new VM disks will be stored
+    vm_image_dir: "/storage2/virtmachines"
+
+    # Build full disk path from VM name
+    vm_disk_path: "{{ vm_image_dir }}/{{ vm_name }}.qcow2"
+
+  tasks:
+    - name: Check that the base image exists
+      ansible.builtin.stat:
+        path: "{{ base_image_path }}"
+      register: base_image_stat
+
+    - name: Fail if base image is missing
+      ansible.builtin.fail:
+        msg: "Base image not found at {{ base_image_path }}. Please create or adjust the path."
+      when: not base_image_stat.stat.exists
+
+    - name: Create VM disk from base image (copy-on-write)
+      ansible.builtin.command:
+        cmd: >
+          qemu-img create
+          -f qcow2
+          -b {{ base_image_path }}
+          {{ vm_disk_path }}
+          {{ vm_disk }}G
+        creates: "{{ vm_disk_path }}"
+
+    - name: Define and start the VM
+      community.libvirt.virt:
+        name: "{{ vm_name }}"
+        state: running
+        memory_mb: "{{ vm_ram }}"
+        vcpus: "{{ cpu_count }}"
+        disks:
+          - name: vda
+            state: present
+            device: disk
+            format: qcow2
+            src: "{{ vm_disk_path }}"
+        networks:
+          - name: "{{ vm_network }}"
+        boot:
+          devices:
+            - hd
+      vars:
+        ansible_python_interpreter: /usr/bin/python3
+
+    - name: Show VM info
+      community.libvirt.virt:
+        name: "{{ vm_name }}"
+        command: info
+      register: vm_info
+
+    - name: Print VM info
+      ansible.builtin.debug:
+        var: vm_info
 
